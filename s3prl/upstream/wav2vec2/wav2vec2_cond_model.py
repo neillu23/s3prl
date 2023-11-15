@@ -2405,7 +2405,7 @@ class Wav2Vec2CondModel(nn.Module):
 
         self.separate_forward = False
         self.sep1_layer = None
-        if "separate_forward" in cond_cfg:
+        if "separate_forward" in cond_cfg and cond_cfg["separate_forward"] is True:
             self.separate_forward = cond_cfg["separate_forward"]
             self.sep1_layer = cond_cfg["sep1_layer"]
 
@@ -3022,7 +3022,7 @@ class TransformerCondEncoder(nn.Module):
         self.separate_forward = False
         self.sep1_layer = None
 
-        if "separate_forward" in cond_cfg:
+        if "separate_forward" in cond_cfg and cond_cfg["separate_forward"] is True:
             self.separate_forward = cond_cfg["separate_forward"]
             self.sep1_layer = cond_cfg["sep1_layer"]
 

@@ -102,7 +102,7 @@ class ConditionUpstreamExpert(UpstreamBase):
         self.wav_normalize = task_cfg.normalize
 
         self.separate_forward = False
-        if "separate_forward" in cond_cfg:
+        if "separate_forward" in cond_cfg and cond_cfg["separate_forward"]:
             self.separate_forward = cond_cfg["separate_forward"]
             self.sep1_layer = cond_cfg["sep1_layer"]
 
