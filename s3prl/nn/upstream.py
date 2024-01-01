@@ -110,6 +110,7 @@ class S3PRLUpstream(nn.Module):
         extra_conf: dict = None,
         randomize: bool = False,
         embed_condition: bool = False, 
+        self_condition: bool = False, 
     ):
         super().__init__()
         upstream_conf = {
@@ -121,6 +122,7 @@ class S3PRLUpstream(nn.Module):
 
         self.upstream = getattr(hub, name)(**upstream_conf)
         self.embed_condition = embed_condition
+        self.self_condition = self_condition
 
         if randomize:
             randomize_upstream(self.upstream)
@@ -184,7 +186,7 @@ class S3PRLUpstream(nn.Module):
 
         return xs
 
-    def forward(self, wavs: torch.FloatTensor, wavs_len: torch.LongTensor, condition_features: torch.FloatTensor = None, split_forward: bool = False, second_forward: bool = False, last_layer_result: torch.FloatTensor = None):
+    def forward(self, wavs: torch.FloatTensor, wavs_len: torch.LongTensor, condition_features: torch.FloatTensor = None, langs: torch.LongTensor=None, langs_lens: torch.LongTensor=None, split_forward: bool = False, last_layer_result: torch.FloatTensor = None, start_layer: int = 0, end_layer: int = 24):
         """
         Args:
             wavs (torch.FloatTensor): (batch_size, seqlen) or (batch_size, seqlen, 1)
@@ -211,9 +213,13 @@ class S3PRLUpstream(nn.Module):
         wavs_list = []
         for wav, wav_len in zip(wavs, wavs_len):
             wavs_list.append(wav[:wav_len])
-            
-        if self.embed_condition:
-            hidden_states = self.upstream(wavs_list, condition_features, split_forward=split_forward, second_forward=second_forward, last_layer_result=last_layer_result)["hidden_states"]
+        
+        if self.self_condition:
+            result = self.upstream(wavs_list, condition_features, langs=langs, langs_lens=langs_lens, split_forward=split_forward, last_layer_result=last_layer_result, start_layer=start_layer, end_layer=end_layer)
+            hidden_states = result["hidden_states"]
+            self_condition_loss = result["self_condition_loss"]
+        elif self.embed_condition:
+            hidden_states = self.upstream(wavs_list, condition_features, langs=langs, langs_lens=langs_lens, split_forward=split_forward, last_layer_result=last_layer_result, start_layer=start_layer, end_layer=end_layer)["hidden_states"]
         else:
             hidden_states = self.upstream(wavs_list)["hidden_states"]
 
@@ -221,18 +227,15 @@ class S3PRLUpstream(nn.Module):
 
         assert isinstance(hidden_states, (list, tuple))
 
-        if second_forward:
-            assert(split_forward), "second_forward is True, but split_forward is False"
 
-
-        if split_forward and not second_forward:
+        if split_forward:
             assert (
-                len(hidden_states) == self.upstream.sep1_layer + 1 
-            ), f"{len(hidden_states)}, {self.upstream.sep1_layer + 1}"
-        elif split_forward and second_forward:
-            assert (
-                len(hidden_states) == self.num_layers - (self.upstream.sep1_layer)
-            ), f"{len(hidden_states)}, {self.num_layers - (self.upstream.sep1_layer)}"
+                len(hidden_states) == end_layer - start_layer + 1 
+            ), f"{len(hidden_states)}, {end_layer - start_layer + 1}"
+        # elif split_forward and second_forward:
+        #     assert (
+        #         len(hidden_states) == self.num_layers - (self.upstream.sep1_layer)
+        #     ), f"{len(hidden_states)}, {self.num_layers - (self.upstream.sep1_layer)}"
         else:
             assert (
                 len(hidden_states) == self.num_layers
@@ -253,6 +256,9 @@ class S3PRLUpstream(nn.Module):
 
             all_hs.append(h)
             all_lens.append(h_len)
+        
+        if self.self_condition:
+            return all_hs, all_lens, self_condition_loss
 
         return all_hs, all_lens
 
@@ -340,7 +346,7 @@ class Featurizer(nn.Module):
         for l in all_lens[1:]:
             torch.allclose(all_lens[0], l)
         stacked_hs = torch.stack(all_hs, dim=0)
-
+        # import pdb; pdb.set_trace()
         if self.normalize:
             stacked_hs = F.layer_norm(stacked_hs, (stacked_hs.shape[-1],))
 

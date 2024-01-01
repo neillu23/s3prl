@@ -101,10 +101,10 @@ class ConditionUpstreamExpert(UpstreamBase):
         self.model = model
         self.wav_normalize = task_cfg.normalize
 
-        self.separate_forward = False
-        if "separate_forward" in cond_cfg:
-            self.separate_forward = cond_cfg["separate_forward"]
-            self.sep1_layer = cond_cfg["sep1_layer"]
+        # self.separate_forward = False
+        # if "separate_forward" in cond_cfg and cond_cfg["separate_forward"]:
+        #     self.separate_forward = cond_cfg["separate_forward"]
+        #     # self.sep1_layer = cond_cfg["sep1_layer"]
 
         self.model.feature_grad_mult = 0.0
         self.model.encoder.layerdrop = 0.0
@@ -140,12 +140,19 @@ class ConditionUpstreamExpert(UpstreamBase):
 
             self.hook_postprocess = postprocess
 
+        self.self_condition = False
+        if "self_condition" in cond_cfg and cond_cfg["self_condition"]:
+            self.self_condition = True
+            # add hook for self condition
+            self.add_hook("self.model.encoder", lambda input, output: output[2])
+
 
     def get_downsample_rates(self, key: str) -> int:
         return 320
 
-    def forward(self, wavs, condition_features=None, split_forward=False, second_forward=False, last_layer_result=None):
+    def forward(self, wavs, condition_features=None, langs=None, langs_lens=None, split_forward=False, last_layer_result=None, start_layer=0, end_layer=24):
         # logging.info("condition_features:{}".format(condition_features))
+        # import pdb; pdb.set_trace()
         device = wavs[0].device
         # if not self.separate_forward or not second_forward:
         if self.wav_normalize:
@@ -163,7 +170,7 @@ class ConditionUpstreamExpert(UpstreamBase):
         padded_wav = pad_sequence(wavs, batch_first=True)
 
         results = self.model.extract_features(
-            padded_wav, condition_features, wav_padding_mask if self.apply_padding_mask else None, split_forward=split_forward, second_forward=second_forward, last_layer_result=last_layer_result
+            padded_wav, condition_features, langs, langs_lens, wav_padding_mask if self.apply_padding_mask else None, split_forward=split_forward, last_layer_result=last_layer_result, start_layer=start_layer, end_layer=end_layer
         )
 
         if self.feature_selection is not None:

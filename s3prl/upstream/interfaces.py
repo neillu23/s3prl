@@ -115,9 +115,13 @@ class UpstreamBase(nn.Module, metaclass=initHook):
                     file=sys.stderr,
                 )
                 raise ValueError
-
+                
             hook_hiddens = self._hook_hiddens.copy()
             self._hook_hiddens.clear()
+            
+            if hook_hiddens[-1][0] == hook_hiddens[-2][0]:
+                result["self_condition_loss"] = hook_hiddens[-1][1]
+                hook_hiddens = hook_hiddens[:-1] 
 
             if callable(self.hook_postprocess):
                 hook_hiddens = self.hook_postprocess(hook_hiddens)

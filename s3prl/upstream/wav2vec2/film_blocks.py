@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import logging
 
 class FiLM(nn.Module):
     def __init__(self, input_size, condition_size, film_type="linear"):
@@ -33,3 +34,35 @@ class FiLM(nn.Module):
         return x
 
 
+class ConditionalBatchNorm(nn.Module):
+    def __init__(self, input_size, condition_size, layer_type="linear"):
+        super(ConditionalBatchNorm, self).__init__()
+        self.input_size = input_size
+        self.bn = nn.BatchNorm1d(input_size, affine=False)
+        self.linear_scale = nn.Linear(condition_size, input_size)
+        self.linear_shift = nn.Linear(condition_size, input_size)
+        # self.embed = nn.Linear(condition_size, input_size * 2)
+        # self.embed.weight.data[:, :input_size].fill_(1)
+        # self.embed.weight.data[:, input_size:].zero_()
+
+    def forward(self, x, condition):
+        # logging.info(f"input shape: {x.shape}")
+        # logging.info(f"condition shape: {condition.shape}")
+        # loggin.info(f"self.bn.weight shape: {self.bn.weight.shape}")
+        x = torch.permute(x, (1,2,0))
+        out = self.bn(x)
+        out = torch.permute(out, (2,0,1))
+        if x.ndim == 3:
+            gamma = self.linear_scale(condition).expand_as(out)
+            beta = self.linear_shift(condition).expand_as(out)
+            out = out * gamma + beta
+        elif x.ndim == 4:
+            gamma = self.linear_scale(condition).unsqueeze(1).expand_as(out)
+            beta = self.linear_shift(condition).unsqueeze(1).expand_as(out)
+            out = out * gamma + beta
+        return out
+
+        # gamma, beta = self.embed(condition).chunk(2, 1)
+        # gamma = gamma.unsqueeze(2).unsqueeze(3)
+        # beta = beta.unsqueeze(2).unsqueeze(3)
+        # return gamma * out + beta

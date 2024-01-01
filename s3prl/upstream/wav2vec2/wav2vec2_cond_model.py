@@ -18,7 +18,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from .film_blocks import FiLM
+from .film_blocks import FiLM, ConditionalBatchNorm
+from .ctc import CTC
 
 
 logger = logging.getLogger(__name__)
@@ -2400,14 +2401,7 @@ class Wav2Vec2CondModel(nn.Module):
         self.embed_condition_start = cond_cfg["embed_condition_start"]
         self.embed_condition_end = cond_cfg["embed_condition_end"]
         self.embed_condition_size = cond_cfg["embed_condition_size"]
-        self.embed_condition_type = cond_cfg["embed_condition_type"]
         self.embed_condition_components = cond_cfg["embed_condition_components"]
-
-        self.separate_forward = False
-        self.sep1_layer = None
-        if "separate_forward" in cond_cfg:
-            self.separate_forward = cond_cfg["separate_forward"]
-            self.sep1_layer = cond_cfg["sep1_layer"]
 
         self.quantizer = None
         self.input_quantizer = None
@@ -2644,6 +2638,8 @@ class Wav2Vec2CondModel(nn.Module):
         self,
         source,
         condition_features=None,
+        langs=None,
+        langs_lens=None,
         padding_mask=None,
         mask=True,
         features_only=False,
@@ -2652,12 +2648,12 @@ class Wav2Vec2CondModel(nn.Module):
         mask_channel_indices=None,
         padding_count=None,
         split_forward=False,
-        second_forward=False,
         last_layer_result=None,
+        start_layer=0,
+        end_layer=24,
     ):
         # logging.info("padding_mask shape: {}".format(padding_mask.shape))
         # logging.info("padding_mask: {}".format(padding_mask))
-        # if not self.separate_forward or not second_forward:
         if self.feature_grad_mult > 0:
             features = self.feature_extractor(source)
             if self.feature_grad_mult != 1.0:
@@ -2739,7 +2735,7 @@ class Wav2Vec2CondModel(nn.Module):
         #     x = None
 
         # logging.info("padding_mask shape: {}".format(padding_mask.shape))
-        x, layer_results = self.encoder(x, condition_features=condition_features, padding_mask=padding_mask, layer=layer, split_forward=split_forward, second_forward=second_forward, last_layer_result=last_layer_result)
+        x, layer_results, loss_interctc = self.encoder(x, condition_features=condition_features, langs=langs, langs_lens=langs_lens, padding_mask=padding_mask, layer=layer, split_forward=split_forward, last_layer_result=last_layer_result, start_layer=start_layer, end_layer=end_layer)
 
         if features_only:
             return {
@@ -2839,9 +2835,9 @@ class Wav2Vec2CondModel(nn.Module):
         x = self.layer_norm(x)
         return self.quantizer.forward_idx(x)
 
-    def extract_features(self, source, condition_features, padding_mask, mask=False, layer=None, split_forward=False, second_forward=False, last_layer_result=None):
+    def extract_features(self, source, condition_features, langs, langs_lens,  padding_mask, mask=False, layer=None, split_forward=False, last_layer_result=None, start_layer=0, end_layer=24):
         res = self.forward(
-            source, condition_features, padding_mask, mask=mask, features_only=True, layer=layer, split_forward=split_forward, second_forward=second_forward, last_layer_result=last_layer_result
+            source, condition_features, langs, langs_lens, padding_mask, mask=mask, features_only=True, layer=layer, split_forward=split_forward, last_layer_result=last_layer_result, start_layer=start_layer, end_layer=end_layer
         )
         return res
 
@@ -3018,13 +3014,15 @@ class TransformerCondEncoder(nn.Module):
         self.embedding_dim = args.encoder_embed_dim
         self.required_seq_len_multiple = args.required_seq_len_multiple
         self.cond_cfg = cond_cfg
-        
-        self.separate_forward = False
-        self.sep1_layer = None
 
-        if "separate_forward" in cond_cfg:
-            self.separate_forward = cond_cfg["separate_forward"]
-            self.sep1_layer = cond_cfg["sep1_layer"]
+        self.self_condition = False
+        if "self_condition" in cond_cfg and cond_cfg["self_condition"]:
+            self.self_condition = True
+            self.global_avg_pool = nn.AdaptiveAvgPool1d(1)
+            self.ctc = CTC(
+                odim=cond_cfg["langs_num"], encoder_output_size=self.embedding_dim
+            )
+        
 
         pos_conv_depth = getattr(args, "pos_conv_depth", 1)
         if pos_conv_depth > 1:
@@ -3070,22 +3068,18 @@ class TransformerCondEncoder(nn.Module):
         self.layer_norm = LayerNorm(self.embedding_dim)
         self.layerdrop = args.encoder_layerdrop
 
-    def forward(self, x, condition_features=None, padding_mask=None, layer=None, split_forward=False, second_forward=False, last_layer_result=None):
+    def forward(self, x, condition_features=None, langs=None, langs_lens=None, padding_mask=None, layer=None, split_forward=False, last_layer_result=None, start_layer=0, end_layer=24):
         # unpad_layer_results = None
         # if layer_results is None:
 
         # logging.info("padding_mask: {}".format(padding_mask))
         # logging.info("padding_mask shape: {}".format(padding_mask.shape))
-        x, layer_results = self.extract_features(x, condition_features, padding_mask, layer, split_forward=split_forward, second_forward=second_forward, last_layer_result=last_layer_result)
-        # elif layer_results is None:
-        #     x, unpad_layer_results, layer_results = self.extract_firstgroup_features(x, condition_features, padding_mask, layer, 0, self.cond_cfg["sep1_layer"])
-        # else:
-        #     x, layer_results = self.extract_secondgroup_features(x, layer_results, condition_features, padding_mask, layer, self.cond_cfg["sep1_layer"], max_layer)
-
+        x, layer_results, loss_interctc = self.extract_features(x, condition_features, langs, langs_lens, padding_mask, layer, split_forward=split_forward, last_layer_result=last_layer_result, start_layer=start_layer, end_layer=end_layer)
+        
         if self.layer_norm_first and layer is None:
             x = self.layer_norm(x)
 
-        return x, layer_results
+        return x, layer_results, loss_interctc
 
 
 
@@ -3093,12 +3087,15 @@ class TransformerCondEncoder(nn.Module):
         self,
         x,
         condition_features=None,
+        langs=None,
+        langs_lens=None,
         padding_mask=None,
         tgt_layer=None,
         min_layer=0,
         split_forward=False,
-        second_forward=False,
         last_layer_result=None,
+        start_layer=0,
+        end_layer=24,
     ):
 
         # logging.info("padding_mask: {}".format(padding_mask))
@@ -3136,11 +3133,14 @@ class TransformerCondEncoder(nn.Module):
         layer_results = []
         r = None
         # logging.info("x shape outside: {}".format(x.shape))
+        
+        loss_interctc = 0.0
         for i, layer in enumerate(self.layers):
-            if split_forward and not second_forward and i == self.sep1_layer:
+            loss_ic = None
+            if split_forward and i == end_layer:
                 r = x
                 break
-            elif split_forward and second_forward and i < self.sep1_layer:
+            elif split_forward and i < start_layer:
                 continue
 
             dropout_probability = np.random.random() if self.layerdrop > 0 else 1
@@ -3152,6 +3152,16 @@ class TransformerCondEncoder(nn.Module):
                 )
                 if i >= min_layer:
                     layer_results.append((x, z, lr))
+                if self.self_condition:
+                    # Calc CTC loss for self_condition
+                    if langs is not None:
+                        lr = layer_results[-1][2]
+                        lr_lens = torch.sum(lr != 0, dim=0).T[0]
+                        loss_ic = self.ctc(self.global_avg_pool(lr.permute(1,2,0)).permute(0,2,1), langs_lens, langs, langs_lens)
+                        condition_features = self.ctc.softmax(self.global_avg_pool(lr.permute(1,2,0)).permute(0,2,1)) #.permute(1,0,2)
+                        loss_interctc += loss_ic
+
+                    
             if i == tgt_layer:
                 r = x
                 break
@@ -3176,7 +3186,7 @@ class TransformerCondEncoder(nn.Module):
             layer_results = [undo_pad(*u) for u in layer_results]
 
         # logging.info("layer_results length:{}".format(len(layer_results)))
-        return x, layer_results
+        return x, layer_results, loss_interctc
 
     def max_positions(self):
         """Maximum output length supported by the encoder."""
@@ -3302,10 +3312,23 @@ class TransformerSentenceEncoderLayer(nn.Module):
             dropout=attention_dropout,
             self_attention=True,
         )
+
+        CondLayer = FiLM if cond_cfg["embed_condition_method"] == "FiLM" else ConditionalBatchNorm
         if layer_index >= cond_cfg["embed_condition_start"] and layer_index < cond_cfg["embed_condition_end"]:
             self.embed_condition = True
-            self.condition_layer = FiLM(embedding_dim, cond_cfg["embed_condition_size"], "linear")
             self.embed_condition_components = cond_cfg["embed_condition_components"]
+
+
+            self.self_condition = False 
+            if "self_condition" in cond_cfg and cond_cfg["self_condition"]:
+                self.self_condition = True
+                self.self_condition_layer = CondLayer(embedding_dim, cond_cfg["langs_num"], "linear")
+
+            elif "fc1" in self.embed_condition_components:
+                self.condition_layer = CondLayer(ffn_embedding_dim, cond_cfg["embed_condition_size"], "linear")
+            else:
+                self.condition_layer = CondLayer(embedding_dim, cond_cfg["embed_condition_size"], "linear")
+
         else:
             self.embed_condition_components = []
 
@@ -3314,6 +3337,8 @@ class TransformerSentenceEncoderLayer(nn.Module):
         self.dropout3 = nn.Dropout(dropout)
 
         self.layer_norm_first = layer_norm_first
+        self.global_avg_pool = nn.AdaptiveAvgPool1d(1) # for self_condition
+        # logging.info(f'layer_norm_first:{self.layer_norm_first}')
 
         # layer norm associated with the self attention layer
         self.self_attn_layer_norm = LayerNorm(self.embedding_dim)
@@ -3340,11 +3365,20 @@ class TransformerSentenceEncoderLayer(nn.Module):
         if condition_features is not None:
             condition_features = torch.permute(condition_features, (1, 0, 2))
 
+        cond_used = False
+        assert(self.layer_norm_first)
+        # middle_result = None
+        # import pdb; pdb.set_trace()
         if self.layer_norm_first:
-            x = self.self_attn_layer_norm(x)
-            if "layernorm_1" in self.embed_condition_components and condition_features is not None:
+            if "atln1" in self.embed_condition_components and condition_features is not None:
                 # logging.info("using layernorm 1 condition_layer")
                 x = self.condition_layer(x, condition_features)
+                cond_used = True
+            x = self.self_attn_layer_norm(x)
+            if "atln2" in self.embed_condition_components and condition_features is not None:
+                # logging.info("using layernorm 1 condition_layer")
+                x = self.condition_layer(x, condition_features)
+                cond_used = True
             x, attn = self.self_attn(
                 query=x,
                 key=x,
@@ -3353,23 +3387,51 @@ class TransformerSentenceEncoderLayer(nn.Module):
                 attn_mask=self_attn_mask,
                 need_weights=False,
             )
-            x = self.dropout1(x)
-            if "attention" in self.embed_condition_components and condition_features is not None:
+            if "at1" in self.embed_condition_components and condition_features is not None:
                 # logging.info("using attention condition_layer")
                 x = self.condition_layer(x, condition_features)
+                cond_used = True
+            x = self.dropout1(x)
+            if "attention" in self.embed_condition_components and (condition_features is not None): # or self.self_condition):
+                # logging.info("using attention condition_layer")
+                # middle_result = x 
+                if self.self_condition:
+                    x = self.self_condition_layer(x, condition_features)
+                else:
+                    x = self.condition_layer(x, condition_features)
+                cond_used = True
             x = residual + x
 
+            if "res" in self.embed_condition_components and condition_features is not None:
+                # logging.info("using layernorm 2 condition_layer")
+                x = self.condition_layer(x, condition_features)
+                cond_used = True
+
             residual = x
+            if "ln1" in self.embed_condition_components and condition_features is not None:
+                # logging.info("using layernorm 2 condition_layer")
+                x = self.condition_layer(x, condition_features)
+                cond_used = True
             x = self.final_layer_norm(x)
-            if "layernorm_2" in self.embed_condition_components and condition_features is not None:
+            if "ln2" in self.embed_condition_components and condition_features is not None:
                 # logging.info("using layernorm 2 condition_layer")
                 x = self.condition_layer(x, condition_features)
+                cond_used = True
             x = self.activation_fn(self.fc1(x))
-            x = self.dropout2(x)
-            x = self.fc2(x)
-            if "foward_2" in self.embed_condition_components and condition_features is not None:
+            if "fc1" in self.embed_condition_components and condition_features is not None:
                 # logging.info("using layernorm 2 condition_layer")
                 x = self.condition_layer(x, condition_features)
+                cond_used = True
+            x = self.dropout2(x)
+            if "do2" in self.embed_condition_components and condition_features is not None:
+                # logging.info("using layernorm 2 condition_layer")
+                x = self.condition_layer(x, condition_features)
+                cond_used = True
+            x = self.fc2(x)
+            if "fc2" in self.embed_condition_components and condition_features is not None:
+                # logging.info("using layernorm 2 condition_layer")
+                x = self.condition_layer(x, condition_features)
+                cond_used = True
 
             layer_result = x
 
@@ -3399,7 +3461,8 @@ class TransformerSentenceEncoderLayer(nn.Module):
             x = self.dropout3(x)
             x = residual + x
             x = self.final_layer_norm(x)
-
+        if cond_used == False and condition_features is not None:
+            assert(False, "condition features are not used")    
         return x, (attn, layer_result)
 
 
