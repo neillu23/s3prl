@@ -3235,7 +3235,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
         self.dropout3 = nn.Dropout(dropout)
 
         self.layer_norm_first = layer_norm_first
-
+        # logging.info(f'self.layer_norm_first: {self.layer_norm_first}')
         # layer norm associated with the self attention layer
         self.self_attn_layer_norm = LayerNorm(self.embedding_dim)
         self.fc1 = nn.Linear(self.embedding_dim, ffn_embedding_dim)

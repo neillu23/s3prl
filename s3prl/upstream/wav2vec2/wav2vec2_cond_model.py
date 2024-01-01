@@ -3126,7 +3126,8 @@ class TransformerCondEncoder(nn.Module):
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
 
-        if last_layer_result is not None:
+        if split_forward and start_layer > 0:
+            assert(last_layer_result is not None)
             x = last_layer_result
 
         # logging.info("padding_mask: {}".format(padding_mask))

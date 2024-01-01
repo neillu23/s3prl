@@ -101,11 +101,6 @@ class ConditionUpstreamExpert(UpstreamBase):
         self.model = model
         self.wav_normalize = task_cfg.normalize
 
-        # self.separate_forward = False
-        # if "separate_forward" in cond_cfg and cond_cfg["separate_forward"]:
-        #     self.separate_forward = cond_cfg["separate_forward"]
-        #     # self.sep1_layer = cond_cfg["sep1_layer"]
-
         self.model.feature_grad_mult = 0.0
         self.model.encoder.layerdrop = 0.0
 
@@ -154,7 +149,7 @@ class ConditionUpstreamExpert(UpstreamBase):
         # logging.info("condition_features:{}".format(condition_features))
         # import pdb; pdb.set_trace()
         device = wavs[0].device
-        # if not self.separate_forward or not second_forward:
+        
         if self.wav_normalize:
             if self.numpy_wav_normalize:
                 wavs = zero_mean_unit_var_norm([wav.cpu().numpy() for wav in wavs])
