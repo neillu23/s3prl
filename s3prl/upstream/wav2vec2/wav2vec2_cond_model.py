@@ -11,14 +11,15 @@ import math
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum, EnumMeta
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, Union
+
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from .film_blocks import FiLM, ConditionalBatchNorm
+from .film_blocks import FiLM, DoubleFiLM, ConditionalBatchNorm
 from .ctc import CTC
 
 
@@ -3314,20 +3315,29 @@ class TransformerSentenceEncoderLayer(nn.Module):
             self_attention=True,
         )
 
-        CondLayer = FiLM if cond_cfg["embed_condition_method"] == "FiLM" else ConditionalBatchNorm
+        CondLayer = None 
+        if cond_cfg["embed_condition_method"] == "FiLM":
+            CondLayer = FiLM
+        elif cond_cfg["embed_condition_method"] == "DoubleFiLM":
+            CondLayer = DoubleFiLM
+        elif cond_cfg["embed_condition_method"] == "cbn": 
+            CondLayer = ConditionalBatchNorm 
+        else:
+            raise NotImplementedError
+
         if layer_index >= cond_cfg["embed_condition_start"] and layer_index < cond_cfg["embed_condition_end"]:
             self.embed_condition = True
             self.embed_condition_components = cond_cfg["embed_condition_components"]
-
 
             self.self_condition = False 
             if "self_condition" in cond_cfg and cond_cfg["self_condition"]:
                 self.self_condition = True
                 self.self_condition_layer = CondLayer(embedding_dim, cond_cfg["langs_num"], "linear")
-
-            elif "fc1" in self.embed_condition_components:
-                self.condition_layer = CondLayer(ffn_embedding_dim, cond_cfg["embed_condition_size"], "linear")
             else:
+                embed_dim = embedding_dim
+                if "fc1" in self.embed_condition_components:
+                    embed_dim = ffn_embedding_dim
+                    
                 self.condition_layer = CondLayer(embedding_dim, cond_cfg["embed_condition_size"], "linear")
 
         else:
@@ -3352,7 +3362,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        condition_features: torch.Tensor = None,
+        condition_features: Union[torch.Tensor, List[torch.Tensor]] = None,
         self_attn_mask: torch.Tensor = None,
         self_attn_padding_mask: torch.Tensor = None,
         need_weights: bool = False,
@@ -3364,7 +3374,14 @@ class TransformerSentenceEncoderLayer(nn.Module):
         """
         residual = x
         if condition_features is not None:
-            condition_features = torch.permute(condition_features, (1, 0, 2))
+            # check for list of tensor
+            # import pdb; pdb.set_trace()
+            # logging.info("condition_features shape: {}".format(condition_features[0].shape))
+            if isinstance(condition_features, list):
+                condition_features = [torch.permute(cond_feats, (1, 0, 2)) for cond_feats in condition_features]
+            else:
+                condition_features = torch.permute(condition_features, (1, 0, 2))
+            # logging.info("condition_features shape: {}".format(condition_features[0].shape))
 
         cond_used = False
         assert(self.layer_norm_first)
