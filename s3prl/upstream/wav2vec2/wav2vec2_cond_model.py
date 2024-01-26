@@ -3384,7 +3384,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
             # logging.info("condition_features shape: {}".format(condition_features[0].shape))
 
         cond_used = False
-        assert(self.layer_norm_first)
+        # assert(self.layer_norm_first)
         # middle_result = None
         # import pdb; pdb.set_trace()
         if self.layer_norm_first:
@@ -3465,6 +3465,14 @@ class TransformerSentenceEncoderLayer(nn.Module):
             )
 
             x = self.dropout1(x)
+            if "attention" in self.embed_condition_components and (condition_features is not None): # or self.self_condition):
+                # logging.info("using attention condition_layer")
+                # middle_result = x 
+                if self.self_condition:
+                    x = self.self_condition_layer(x, condition_features)
+                else:
+                    x = self.condition_layer(x, condition_features)
+                cond_used = True
             x = residual + x
 
             x = self.self_attn_layer_norm(x)
