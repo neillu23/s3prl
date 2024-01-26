@@ -20,6 +20,7 @@ from s3prl.util.download import _urls_to_filepaths
 from .convert import load_and_convert_fairseq_ckpt
 from .expert import LegacyUpstreamExpert as _LegacyUpstreamExpert
 from .expert import UpstreamExpert as _UpstreamExpert
+from .expert import ConditionUpstreamExpert as _ConditionUpstreamExpert
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ def hubert_custom(
     legacy: bool = False,
     fairseq: bool = False,
     refresh: bool = False,
+    embed_condition: bool = False,  
     **kwargs,
 ):
     assert not (legacy and fairseq), (
@@ -39,6 +41,9 @@ def hubert_custom(
         "be fairseq indenpendent and then load the checkpoint. "
         "These two options cannot be used jointly."
     )
+
+    assert not (legacy and embed_condition), "legacy and embed_condition cannot be used jointly."
+    assert not (fairseq and embed_condition), "fairseq and embed_condition cannot be used jointly."
 
     if ckpt.startswith("http"):
         ckpt = _urls_to_filepaths(ckpt, refresh=refresh)
@@ -60,8 +65,12 @@ def hubert_custom(
         ckpt = converted_ckpt
 
     assert os.path.isfile(ckpt)
+    # logging.info("embed_condition: {}".format(embed_condition))
     if legacy:
         return _LegacyUpstreamExpert(ckpt, **kwargs)
+    elif embed_condition:  
+        # logging.info("embed_condition: {}".format(embed_condition))
+        return _ConditionUpstreamExpert(ckpt, **kwargs) 
     else:
         return _UpstreamExpert(ckpt, **kwargs)
 
@@ -123,11 +132,13 @@ def hubert_base_robust_mgr(refresh=False, legacy=False, **kwargs):
     return hubert_custom(refresh=refresh, legacy=legacy, **kwargs)
 
 
-def mhubert_base_vp_en_es_fr_it3(refresh=False, **kwds):
+def mhubert_base_vp_en_es_fr_it3(refresh=False, embed_condition=False, **kwds):
+    logging.info("Loading mhubert_base_vp_en_es_fr_it3")
+    # logging.info("embed_condition: {}".format(embed_condition))
     kwds[
         "ckpt"
     ] = "https://huggingface.co/s3prl/converted_ckpts/resolve/main/mhubert_base_vp_en_es_fr_it3.pt"
-    return hubert_custom(refresh=refresh, **kwds)
+    return hubert_custom(refresh=refresh, embed_condition=embed_condition, **kwds)
 
 
 def contentvec(refresh=False, **kwds):
