@@ -3378,7 +3378,9 @@ class TransformerSentenceEncoderLayer(nn.Module):
             # import pdb; pdb.set_trace()
             # logging.info("condition_features shape: {}".format(condition_features[0].shape))
             if isinstance(condition_features, list):
-                condition_features = [torch.permute(cond_feats, (1, 0, 2)) for cond_feats in condition_features]
+                # condition_features = [torch.permute(cond_feats, (1, 0, 2)) for cond_feats in condition_features]
+                condition_features = [torch.permute(cond_feats, (1, 0, 2)) if cond_feats is not None else None for cond_feats in condition_features]
+
             else:
                 condition_features = torch.permute(condition_features, (1, 0, 2))
             # logging.info("condition_features shape: {}".format(condition_features[0].shape))

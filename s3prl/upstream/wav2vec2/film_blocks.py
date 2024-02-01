@@ -71,15 +71,21 @@ class DoubleFiLM(nn.Module):
             # logging.info(f"lang_condition shape: {lang_condition[0].shape}")
             gamma1 = self.linear_scale(lang_condition[0]).expand_as(x)
             beta1 = self.linear_shift(lang_condition[0]).expand_as(x)
-            gamma2 = self.linear_scale_2(lang_condition[1]).expand_as(x)
-            beta2 = self.linear_shift_2(lang_condition[1]).expand_as(x)
-            x = x * (gamma1 * gamma2) + (beta1 + beta2)
+            if lang_condition[1] is not None:
+                gamma2 = self.linear_scale_2(lang_condition[1]).expand_as(x)
+                beta2 = self.linear_shift_2(lang_condition[1]).expand_as(x)
+                x = x * (gamma1 * gamma2) + (beta1 + beta2)
+            else:
+                x = x * gamma1 + beta1
         elif x.ndim == 4:
             gamma1 = self.linear_scale(lang_condition[0]).unsqueeze(1).expand_as(x)
             beta1 = self.linear_shift(lang_condition[0]).unsqueeze(1).expand_as(x)
-            gamma2 = self.linear_scale_2(lang_condition[1]).unsqueeze(1).expand_as(x)
-            beta2 = self.linear_shift_2(lang_condition[1]).unsqueeze(1).expand_as(x)
-            x = x * (gamma1 * gamma2) + (beta1 + beta2)
+            if lang_condition[1] is not None:
+                gamma2 = self.linear_scale_2(lang_condition[1]).unsqueeze(1).expand_as(x)
+                beta2 = self.linear_shift_2(lang_condition[1]).unsqueeze(1).expand_as(x)
+                x = x * (gamma1 * gamma2) + (beta1 + beta2)
+            else:
+                x = x * gamma1 + beta1
         return x
 
 
