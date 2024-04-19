@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from .film_blocks import FiLM, DoubleFiLM, ConditionalBatchNorm
+from .film_blocks import FiLM, AttFiLM, AttFiLM2, DoubleFiLM, ConditionalBatchNorm
 from .ctc import CTC
 
 
@@ -3318,12 +3318,20 @@ class TransformerSentenceEncoderLayer(nn.Module):
         CondLayer = None 
         if cond_cfg["embed_condition_method"] == "FiLM":
             CondLayer = FiLM
+        elif cond_cfg["embed_condition_method"] == "AttFiLM":
+            CondLayer = AttFiLM
+        elif cond_cfg["embed_condition_method"] == "AttFiLM2":
+            CondLayer = AttFiLM2
         elif cond_cfg["embed_condition_method"] == "DoubleFiLM":
             CondLayer = DoubleFiLM
         elif cond_cfg["embed_condition_method"] == "cbn": 
             CondLayer = ConditionalBatchNorm 
         else:
             raise NotImplementedError
+
+        params = {}
+        if "embed_condition_config" in cond_cfg:
+            params = cond_cfg["embed_condition_config"]
 
         if layer_index >= cond_cfg["embed_condition_start"] and layer_index < cond_cfg["embed_condition_end"]:
             self.embed_condition = True
@@ -3332,13 +3340,13 @@ class TransformerSentenceEncoderLayer(nn.Module):
             self.self_condition = False 
             if "self_condition" in cond_cfg and cond_cfg["self_condition"]:
                 self.self_condition = True
-                self.self_condition_layer = CondLayer(embedding_dim, cond_cfg["langs_num"], "linear")
+                self.self_condition_layer = CondLayer(input_size=embedding_dim, condition_size=cond_cfg["langs_num"], film_type="linear", **params)
             else:
                 embed_dim = embedding_dim
                 if "fc1" in self.embed_condition_components:
                     embed_dim = ffn_embedding_dim
                     
-                self.condition_layer = CondLayer(embedding_dim, cond_cfg["embed_condition_size"], "linear")
+                self.condition_layer = CondLayer(input_size=embedding_dim, condition_size=cond_cfg["embed_condition_size"], film_type="linear", **params)
 
         else:
             self.embed_condition_components = []
