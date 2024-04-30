@@ -3099,8 +3099,6 @@ class TransformerCondEncoder(nn.Module):
         end_layer=24,
     ):
 
-        # logging.info("padding_mask: {}".format(padding_mask))
-        # if last_layer_result is None:
         if padding_mask is not None:
             x = index_put(x, padding_mask, 0)
 
@@ -3147,9 +3145,7 @@ class TransformerCondEncoder(nn.Module):
 
             dropout_probability = np.random.random() if self.layerdrop > 0 else 1
             if not self.training or (dropout_probability > self.layerdrop):
-                # logging.info("x shape: {}".format(x.shape))
-                # logging.info("padding_mask shape: {}".format(padding_mask.shape))
-                x, (z, lr) = layer(
+                x, (z, lr, mask) = layer(
                     x, condition_features, self_attn_padding_mask=padding_mask, need_weights=False
                 )
                 if i >= min_layer:
@@ -3187,7 +3183,6 @@ class TransformerCondEncoder(nn.Module):
 
             layer_results = [undo_pad(*u) for u in layer_results]
 
-        # logging.info("layer_results length:{}".format(len(layer_results)))
         return x, layer_results, loss_interctc
 
     def max_positions(self):
@@ -3383,7 +3378,6 @@ class TransformerSentenceEncoderLayer(nn.Module):
         residual = x
         if condition_features is not None:
             # check for list of tensor
-            # import pdb; pdb.set_trace()
             # logging.info("condition_features shape: {}".format(condition_features[0].shape))
             if isinstance(condition_features, list):
                 # condition_features = [torch.permute(cond_feats, (1, 0, 2)) for cond_feats in condition_features]
@@ -3396,7 +3390,6 @@ class TransformerSentenceEncoderLayer(nn.Module):
         cond_used = False
         # assert(self.layer_norm_first)
         # middle_result = None
-        # import pdb; pdb.set_trace()
         if self.layer_norm_first:
             if "atln1" in self.embed_condition_components and condition_features is not None:
                 # logging.info("using layernorm 1 condition_layer")
@@ -3499,7 +3492,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
             x = self.final_layer_norm(x)
         if cond_used == False and condition_features is not None:
             assert(False, "condition features are not used")    
-        return x, (attn, layer_result)
+        return x, (attn, layer_result, self_attn_padding_mask)
 
 
 @dataclass
