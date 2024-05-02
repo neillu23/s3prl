@@ -3,6 +3,59 @@ import torch.nn as nn
 import logging
 import torch.nn.functional as F
 
+class AttFiLM3(nn.Module):
+    def __init__(self, input_size, condition_size, hidden_size=128, warmup_attention_steps=None, film_type="linear", att_type="att2", relu2=False):
+        super(AttFiLM3, self).__init__()
+
+        self.linear_scale = nn.Linear(condition_size, input_size)
+        self.linear_shift = nn.Linear(condition_size, input_size)
+
+
+        if att_type == "att2":
+            self.attention_module_time_weight = AttentionModule2(input_size, condition_size, hidden_size, init_value=1.0)
+            # self.attention_module_channel_weight = AttentionModule2(input_size, condition_size, hidden_size, nonsoftmax=nonsoftmax, init_value=1.0)
+            # self.attention_module_time_bias = AttentionModule2(input_size, condition_size, hidden_size, nonsoftmax=nonsoftmax, init_value=1.0)
+            # self.attention_module_channel_bias = AttentionModule2(input_size, condition_size, hidden_size, nonsoftmax=nonsoftmax, init_value=1.0)
+        if att_type == "gatedatt":
+            self.attention_module_time_weight = GatedAttentionModule(input_size, condition_size, hidden_size, init_value=1.0)
+            # self.attention_module_channel_weight = GatedAttentionModule(input_size, condition_size, hidden_size, nonsoftmax=nonsoftmax, init_value=1.0)
+            # self.attention_module_time_bias = GatedAttentionModule(input_size, condition_size, hidden_size, init_value=1.0)
+            # self.attention_module_channel_bias = GatedAttentionModule(input_size, condition_size, hidden_size, nonsoftmax=nonsoftmax, init_value=1.0)
+            
+
+        self.warmup_attention_steps = warmup_attention_steps
+
+    def forward(self, x, lang_condition, step=None):
+        # Calculate base gamma and beta
+        # x: # [T, N, C]
+        # # logging.info(f"x shape: {x.shape}")
+        # # logging.info(f"lang_condition shape: {lang_condition.shape}")
+        gamma = self.linear_scale(lang_condition) # [1, N, C]
+        beta = self.linear_shift(lang_condition) # [1, N, C]
+        # # logging.info(f"lang_condition shape: {lang_condition.shape}")
+
+        # Calculate attention weights
+        attention_weights_time_weight = self.attention_module_time_weight(x, lang_condition) # [T, N, 1]
+        # attention_weights_time_bias = self.attention_module_time_bias(x, lang_condition) # [T, N, 1]
+
+        # attention_weights_channel = self.attention_module_channel(x, lang_condition)# [1, N, C]
+
+        # Apply attention to gamma and beta
+        gamma = gamma * attention_weights_time_weight # [T, N, C]
+        beta = beta * attention_weights_time_weight # [T, N, C]
+
+
+        if x.ndim == 3:
+            x = x * gamma + beta
+        elif x.ndim == 4:
+            gamma = gamma.unsqueeze(1) # For matching dimensions in case of 4D input
+            beta = beta.unsqueeze(1) # For matching dimensions in case of 4D input
+            x = x * gamma + beta
+
+        # logging.info(f"x shape: {x.shape}")
+        return x
+
+
 
 class AttFiLM2(nn.Module):
     def __init__(self, input_size, condition_size, hidden_size=128, warmup_attention_steps=None, nonsoftmax=False, film_type="linear", att_type="att2", relu2=False):
@@ -94,31 +147,32 @@ class GatedAttentionModule(nn.Module):
 
 
 class AttentionModule2(nn.Module):
-    def __init__(self, input_size, condition_size, hidden_size, nonsoftmax=False, init_value=1.0):
+    def __init__(self, input_size, condition_size, hidden_size, init_value=1.0):
         super(AttentionModule2, self).__init__()
         self.attention_fc = nn.Linear(input_size + condition_size, hidden_size)
         # fix weight for all layers + lora (A*B^T)
         self.output_fc = nn.Linear(hidden_size, 1)
         # fix weight for all layers 
-        self.nonsoftmax = nonsoftmax
+        # self.nonsoftmax = nonsoftmax
 
         self.relu = nn.PReLU() 
         
 
         nn.init.kaiming_uniform_(self.attention_fc.weight, nonlinearity='relu')
         nn.init.constant_(self.attention_fc.bias, 0)
-        if self.nonsoftmax:
-            nn.init.constant_(self.output_fc.weight, 0)
-            nn.init.constant_(self.output_fc.bias, init_value)
-        else:
-            nn.init.kaiming_uniform_(self.output_fc.weight)
-            nn.init.constant_(self.output_fc.bias, 0)
-            #xavier_uniform_
+        # if self.nonsoftmax:
+        nn.init.constant_(self.output_fc.weight, 0)
+        nn.init.constant_(self.output_fc.bias, init_value)
+        # else:
+        #     nn.init.kaiming_uniform_(self.output_fc.weight)
+        #     nn.init.constant_(self.output_fc.bias, 0)
+        #     #xavier_uniform_
 
 
     def forward(self, x, lang_condition, step=None):
         # x: [T, N, C], lang_condition: [1, N, C]
         T, N, C = x.size()
+        # logging.info(f"x shape: {x.shape}")
         lang_condition = lang_condition.repeat(T, 1, 1) # [T, N, C]
         combined_input = torch.cat((x, lang_condition), dim=-1) # [T, N, 2*C]
 
@@ -126,10 +180,10 @@ class AttentionModule2(nn.Module):
         attention_scores = self.relu(attention_scores) # [T, N,  hidden_size]
         attention_scores = self.output_fc(attention_scores).squeeze(-1) # [T, N]
 
-        if not self.nonsoftmax:
-            attention_weights = F.softmax(attention_scores, dim=-1).unsqueeze(-1) # [T, N, 1]
-        else:
-            attention_weights = attention_scores.unsqueeze(-1)
+        # if not self.nonsoftmax:
+        #     attention_weights = F.softmax(attention_scores, dim=-1).unsqueeze(-1) # [T, N, 1]
+        # else:
+        attention_weights = attention_scores.unsqueeze(-1)
         return attention_weights
 
 
@@ -189,7 +243,7 @@ class AttFiLM(nn.Module):
         if att_type == "att1":
             self.attention_module = AttentionModule(input_size, condition_size, hidden_size, nonsoftmax=nonsoftmax,relu2=relu2)
         if att_type == "att2":
-            self.attention_module = AttentionModule2(input_size, condition_size, hidden_size, nonsoftmax=nonsoftmax)
+            self.attention_module = AttentionModule2(input_size, condition_size, hidden_size)
         if att_type == "gatedatt":
             self.attention_module = GatedAttentionModule(input_size, condition_size, hidden_size)
 

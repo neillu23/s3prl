@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from .film_blocks import FiLM, AttFiLM, AttFiLM2, DoubleFiLM, ConditionalBatchNorm
+from .film_blocks import FiLM, AttFiLM, AttFiLM2, AttFiLM3, DoubleFiLM, ConditionalBatchNorm
 from .ctc import CTC
 
 
@@ -3317,6 +3317,8 @@ class TransformerSentenceEncoderLayer(nn.Module):
             CondLayer = AttFiLM
         elif cond_cfg["embed_condition_method"] == "AttFiLM2":
             CondLayer = AttFiLM2
+        elif cond_cfg["embed_condition_method"] == "AttFiLM3":
+            CondLayer = AttFiLM3
         elif cond_cfg["embed_condition_method"] == "DoubleFiLM":
             CondLayer = DoubleFiLM
         elif cond_cfg["embed_condition_method"] == "cbn": 
