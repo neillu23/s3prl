@@ -19,6 +19,7 @@ from s3prl.util.download import _urls_to_filepaths
 from .convert import load_and_convert_fairseq_ckpt
 from .expert import LegacyUpstreamExpert as _LegacyUpstreamExpert
 from .expert import UpstreamExpert as _UpstreamExpert
+from .expert import ConditionUpstreamExpert as _ConditionUpstreamExpert
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ def wav2vec2_custom(
     legacy: bool = False,
     fairseq: bool = False,
     refresh: bool = False,
+    embed_condition: bool = False,  
     **kwargs,
 ):
     assert not (legacy and fairseq), (
@@ -38,6 +40,9 @@ def wav2vec2_custom(
         "be fairseq indenpendent and then load the checkpoint. "
         "These two options cannot be used jointly."
     )
+    
+    assert not (legacy and embed_condition), "legacy and embed_condition cannot be used jointly."
+    assert not (fairseq and embed_condition), "fairseq and embed_condition cannot be used jointly."
 
     if ckpt.startswith("http"):
         ckpt = _urls_to_filepaths(ckpt, refresh=refresh)
@@ -61,6 +66,8 @@ def wav2vec2_custom(
     assert os.path.isfile(ckpt)
     if legacy:
         return _LegacyUpstreamExpert(ckpt, **kwargs)
+    elif embed_condition:  
+        return _ConditionUpstreamExpert(ckpt, **kwargs) 
     else:
         return _UpstreamExpert(ckpt, **kwargs)
 
@@ -148,7 +155,7 @@ def xlsr_53(refresh=False, legacy=False, **kwargs):
     return wav2vec2_custom(refresh=refresh, legacy=legacy, **kwargs)
 
 
-def xls_r_300m(refresh=False, legacy=False, **kwargs):
+def xls_r_300m(refresh=False, legacy=False, embed_condition=False, **kwargs):
     """
     XLS-R, this smallest size has the same parameters as the Largs model of wav2vec 2.0 and HuBERT
     """
@@ -157,7 +164,7 @@ def xls_r_300m(refresh=False, legacy=False, **kwargs):
         kwargs[
             "ckpt"
         ] = "https://huggingface.co/s3prl/converted_ckpts/resolve/main/xlsr2_300m.pt"
-    return wav2vec2_custom(refresh=refresh, legacy=legacy, **kwargs)
+    return wav2vec2_custom(refresh=refresh, legacy=legacy, embed_condition=embed_condition, **kwargs)
 
 
 def xls_r_1b(refresh=False, legacy=False, **kwargs):

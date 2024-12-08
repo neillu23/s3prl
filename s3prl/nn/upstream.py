@@ -108,13 +108,18 @@ class S3PRLUpstream(nn.Module):
         normalize: bool = False,
         extra_conf: dict = None,
         randomize: bool = False,
+        embed_condition: bool = False, 
     ):
         super().__init__()
-        upstream_conf = {"refresh": refresh, **(extra_conf or {})}
+        upstream_conf = {
+            "refresh": refresh, 
+            "embed_condition": embed_condition,  
+            **(extra_conf or {})}
         if path_or_url is not None:
             upstream_conf["ckpt"] = path_or_url
 
         self.upstream = getattr(hub, name)(**upstream_conf)
+        self.embed_condition = embed_condition
 
         if randomize:
             randomize_upstream(self.upstream)
@@ -178,7 +183,7 @@ class S3PRLUpstream(nn.Module):
 
         return xs
 
-    def forward(self, wavs: torch.FloatTensor, wavs_len: torch.LongTensor):
+    def forward(self, wavs: torch.FloatTensor, wavs_len: torch.LongTensor, condition_features: torch.FloatTensor = None, langs: torch.LongTensor=None, langs_lens: torch.LongTensor=None, split_forward: bool = False, last_layer_result: torch.FloatTensor = None, start_layer: int = 0, end_layer: int = 24):
         """
         Args:
             wavs (torch.FloatTensor): (batch_size, seqlen) or (batch_size, seqlen, 1)
@@ -205,12 +210,25 @@ class S3PRLUpstream(nn.Module):
         wavs_list = []
         for wav, wav_len in zip(wavs, wavs_len):
             wavs_list.append(wav[:wav_len])
+        
+        if self.embed_condition:
+            hidden_states = self.upstream(wavs_list, condition_features, langs=langs, langs_lens=langs_lens, split_forward=split_forward, last_layer_result=last_layer_result, start_layer=start_layer, end_layer=end_layer)["hidden_states"]
+        else:
+            hidden_states = self.upstream(wavs_list)["hidden_states"]
 
-        hidden_states = self.upstream(wavs_list)["hidden_states"]
+
+
         assert isinstance(hidden_states, (list, tuple))
-        assert (
-            len(hidden_states) == self.num_layers
-        ), f"{len(hidden_states)}, {self.num_layers}"
+
+
+        if split_forward:
+            assert (
+                len(hidden_states) == end_layer - start_layer + 1 
+            ), f"{len(hidden_states)}, {end_layer - start_layer + 1}"
+        else:
+            assert (
+                len(hidden_states) == self.num_layers
+            ), f"{len(hidden_states)}, {self.num_layers}"
 
         max_wav_len = int(max(wavs_len))
         all_hs = []
