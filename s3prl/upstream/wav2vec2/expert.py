@@ -137,7 +137,8 @@ class ConditionUpstreamExpert(UpstreamBase):
     def get_downsample_rates(self, key: str) -> int:
         return 320
 
-    def forward(self, wavs, condition_features=None, langs=None, langs_lens=None, split_forward=False, last_layer_result=None, start_layer=0, end_layer=24):
+    def forward(self, wavs, condition_features=None, langs=None, langs_lens=None, split_forward=False, last_layer_result=None, start_layer=0, end_layer=24, pos_bias=None):
+        # pos_bias: Dummy input to align with WavLM
         # logging.info("condition_features:{}".format(condition_features))
         # import pdb; pdb.set_trace()
         device = wavs[0].device

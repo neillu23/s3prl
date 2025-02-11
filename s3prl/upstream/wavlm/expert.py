@@ -19,6 +19,7 @@ from torch.nn.utils.rnn import pad_sequence
 
 from ..interfaces import UpstreamBase
 from .WavLM import WavLM, WavLMConfig
+from .CondWavLM import CondWavLM
 
 ############
 # CONSTANT #
@@ -85,6 +86,91 @@ class UpstreamExpert(UpstreamBase):
             padding_mask=wav_padding_mask,
             mask=False,
         )
+
+        # This forward function only does the model forward
+        # The return dict is then handled by UpstreamBase's hooks
+
+
+class ConditionUpstreamExpert(UpstreamBase):
+    def __init__(self, ckpt, **kwargs):
+        super().__init__(**kwargs)
+
+        checkpoint = torch.load(ckpt)
+        self.cfg = WavLMConfig(checkpoint["cfg"])
+
+        #Base WAVLM
+        base_model = WavLM(self.cfg)
+        base_model.load_state_dict(checkpoint["model"])
+
+        cond_cfg = kwargs
+        self.model = CondWavLM(self.cfg, cond_cfg)
+        self.copy_init_condition_weights(base_model, self.model)
+
+        self.model.feature_grad_mult = 0.0
+        self.model.encoder.layerdrop = 0.0
+
+        if len(self.hooks) == 0:
+            module_name = "self.model.encoder.layers"
+            for module_id in range(len(eval(module_name))):
+                self.add_hook(
+                    f"{module_name}[{module_id}]",
+                    lambda input, output: input[0].transpose(0, 1),
+                )
+            self.add_hook("self.model.encoder", lambda input, output: output[0])
+
+        self._init_layerdrop = self.model.encoder.layerdrop
+
+    def copy_init_condition_weights(self, model, condition_model):
+        for name, param in condition_model.named_parameters():
+            if name in model.state_dict():
+                param.data.copy_(model.state_dict()[name].data)
+            
+
+    @property
+    def layer_drop(self):
+        return self.model.encoder.layerdrop
+
+    def set_layer_drop(self, layerdrop: float = None):
+        if isinstance(layerdrop, float):
+            self.model.encoder.layerdrop = layerdrop
+        elif layerdrop is None:
+            self.model.encoder.layerdrop = self._init_layerdrop
+        else:
+            raise ValueError("layerdrop can only be float or None")
+
+    def get_downsample_rates(self, key: str) -> int:
+        return 320
+
+    # def forward(self, wavs):
+    def forward(self, wavs, condition_features=None, langs=None, langs_lens=None, split_forward=False, last_layer_result=None, start_layer=0, end_layer=24, pos_bias=None):
+
+        if self.cfg.normalize:
+            wavs = [F.layer_norm(wav, wav.shape) for wav in wavs]
+
+        device = wavs[0].device
+        wav_lengths = torch.LongTensor([len(wav) for wav in wavs]).to(device)
+        wav_padding_mask = ~torch.lt(
+            torch.arange(max(wav_lengths)).unsqueeze(0).to(device),
+            wav_lengths.unsqueeze(1),
+        )
+        padded_wav = pad_sequence(wavs, batch_first=True)
+
+        features, feat_padding_mask = self.model.extract_features(
+            padded_wav, 
+            condition_features,
+            padding_mask=wav_padding_mask,
+            split_forward=split_forward, 
+            last_layer_result=last_layer_result, 
+            start_layer=start_layer, 
+            end_layer=end_layer,
+            pos_bias=pos_bias
+        )
+
+        # features, feat_padding_mask = self.model.extract_features(
+        #     padded_wav,
+        #     padding_mask=wav_padding_mask,
+        #     mask=False,
+        # )
 
         # This forward function only does the model forward
         # The return dict is then handled by UpstreamBase's hooks

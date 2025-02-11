@@ -14,6 +14,8 @@ import os
 from s3prl.util.download import _urls_to_filepaths
 
 from .expert import UpstreamExpert as _UpstreamExpert
+from .expert import ConditionUpstreamExpert as _ConditionUpstreamExpert
+
 
 
 def wavlm_local(ckpt, *args, **kwargs):
@@ -22,6 +24,9 @@ def wavlm_local(ckpt, *args, **kwargs):
         ckpt (str): PATH
     """
     assert os.path.isfile(ckpt)
+    if "embed_condition" in kwargs and kwargs["embed_condition"]:
+        return _ConditionUpstreamExpert(ckpt, **kwargs) 
+
     return _UpstreamExpert(ckpt, *args, **kwargs)
 
 
